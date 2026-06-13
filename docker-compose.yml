@@ -1,0 +1,140 @@
+services:
+
+  # ── Database ──────────────────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: small_cmr
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-apppassword}
+    ports:
+      - "3307:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Gateway nginx ─────────────────────────────────────────────────
+  gateway:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - base
+
+  # ── Base (sempre attivo) ──────────────────────────────────────────
+  base:
+    build:
+      context: ../../small-cmr-base/backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql+pymysql://appuser:${MYSQL_PASSWORD:-apppassword}@db:3306/small_cmr
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      ADMIN_NOME: ${ADMIN_NOME:-Admin}
+      ADMIN_COGNOME: ${ADMIN_COGNOME:-Sistema}
+      ADMIN_AZIENDA: ${ADMIN_AZIENDA:-Sistema}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── Ore (opzionale) ───────────────────────────────────────────────
+  ore:
+    build:
+      context: ../../small-cmr-ore/backend
+    restart: unless-stopped
+    profiles: [ore]
+    environment:
+      DATABASE_URL: mysql+pymysql://appuser:${MYSQL_PASSWORD:-apppassword}@db:3306/small_cmr
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      SERVICE_SECRET: ${SERVICE_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── Richieste (opzionale) ─────────────────────────────────────────
+  richieste:
+    build:
+      context: ../../small-cmr-richieste/backend
+    restart: unless-stopped
+    profiles: [richieste]
+    environment:
+      DATABASE_URL: mysql+pymysql://appuser:${MYSQL_PASSWORD:-apppassword}@db:3306/small_cmr
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      SERVICE_SECRET: ${SERVICE_SECRET}
+      ORE_SERVICE_URL: http://ore:8002
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── Password (opzionale) ──────────────────────────────────────────
+  password:
+    build:
+      context: ../../small-cmr-password/backend
+    restart: unless-stopped
+    profiles: [password]
+    environment:
+      DATABASE_URL: mysql+pymysql://appuser:${MYSQL_PASSWORD:-apppassword}@db:3306/small_cmr
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── Stack PLG (solo produzione) ───────────────────────────────────
+  loki:
+    image: grafana/loki:2.9.0
+    restart: unless-stopped
+    profiles: [prod]
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    restart: unless-stopped
+    profiles: [prod]
+    volumes:
+      - /var/log:/var/log:ro
+      - ./promtail-config.yaml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    restart: unless-stopped
+    profiles: [prod]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - loki
+
+volumes:
+  db_data:
+  loki_data:
+  grafana_data:
