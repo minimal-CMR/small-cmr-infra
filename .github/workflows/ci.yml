@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Validate infra configs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose YAML
+        run: python -c "import yaml,sys; yaml.safe_load(open('docker-compose.yml')); print('ok')"
+
+      - name: Validate nginx syntax
+        run: |
+          docker run --rm \
+            --add-host base:127.0.0.1 \
+            --add-host ore:127.0.0.1 \
+            --add-host richieste:127.0.0.1 \
+            --add-host password:127.0.0.1 \
+            -v "${{ github.workspace }}/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:alpine nginx -t
